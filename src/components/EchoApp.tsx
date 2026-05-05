@@ -148,6 +148,33 @@ export default function EchoApp() {
         )}
       </div>
 
+      {/* Recenter button */}
+      <div className="pointer-events-none absolute right-3 bottom-24 z-[500] sm:bottom-28">
+        <button
+          onClick={async () => {
+            try {
+              const p = await getCurrentPosition();
+              setMe(p);
+              setFocusTo({ lat: p.lat, lng: p.lng, key: Date.now() });
+            } catch (e) {
+              setLocErr((e as Error).message);
+            }
+          }}
+          disabled={!me}
+          aria-label="Center on my location"
+          className="pointer-events-auto flex h-11 w-11 items-center justify-center rounded-full bg-zinc-900/90 text-zinc-100 shadow-lg ring-1 ring-zinc-700 backdrop-blur hover:bg-zinc-800 disabled:opacity-50"
+        >
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+            <circle cx="12" cy="12" r="3" />
+            <circle cx="12" cy="12" r="9" />
+            <line x1="12" y1="1" x2="12" y2="4" />
+            <line x1="12" y1="20" x2="12" y2="23" />
+            <line x1="1" y1="12" x2="4" y2="12" />
+            <line x1="20" y1="12" x2="23" y2="12" />
+          </svg>
+        </button>
+      </div>
+
       {/* Drop button */}
       <div className="pointer-events-none absolute inset-x-0 bottom-0 z-[500] flex justify-center p-5 pb-[max(1.25rem,env(safe-area-inset-bottom))]">
         <button
