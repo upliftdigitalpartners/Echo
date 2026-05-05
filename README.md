@@ -1,36 +1,96 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# Echo
 
-## Getting Started
+Voice messages locked to GPS coordinates. Drop a 60-second audio memo at any spot on Earth — only someone physically standing there can play it back.
 
-First, run the development server:
+PWA, Next.js 16, Supabase (Postgres + PostGIS + Storage), Leaflet + OpenStreetMap. Designed to run on free tiers end-to-end.
+
+## How it works
+
+- **Drop**: tap a button, record up to 60s, the pin is stamped at your current GPS.
+- **Listen**: tap a pin on the map. The server checks your live coordinates against the pin's coordinates with PostGIS. If you're within `LISTEN_RADIUS_M` (default 50m), it mints a 60-second signed URL and the audio plays. Otherwise it tells you how far you are.
+- **Report**: a pin auto-hides after 3 unique reports.
+- **Auth**: anonymous — first visit calls `signInAnonymously()`. No accounts, no passwords.
+
+Audio is stored in a private bucket. There is no public read URL — every playback is brokered by the server-side proximity check.
+
+## Setup
+
+### 1. Create a Supabase project
+
+1. Sign up at https://supabase.com (free tier is fine).
+2. Create a new project. Wait for it to finish provisioning.
+3. Open the **SQL editor**, paste the contents of [`supabase/schema.sql`](supabase/schema.sql), run it. This installs PostGIS, creates `pins` + `reports` tables, RLS policies, RPC functions, and the private `audio` storage bucket.
+4. **Settings → Authentication → Sign In / Up** — toggle **Enable anonymous sign-ins** on.
+5. **Settings → API** — copy:
+   - `Project URL` → `NEXT_PUBLIC_SUPABASE_URL`
+   - `anon public` key → `NEXT_PUBLIC_SUPABASE_ANON_KEY`
+   - `service_role` key (under "Project API keys") → `SUPABASE_SERVICE_ROLE_KEY`
+
+### 2. Configure env
 
 ```bash
-npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
+cp .env.example .env.local
+# then paste the three values into .env.local
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+### 3. Run locally
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+```bash
+npm install
+npm run dev
+```
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+Open http://localhost:3000. **Microphone and geolocation only work on `localhost` or HTTPS** — Chrome/Safari will silently refuse on plain HTTP otherwise.
 
-## Learn More
+### 4. Deploy to Vercel (free)
 
-To learn more about Next.js, take a look at the following resources:
+```bash
+npm i -g vercel
+vercel
+```
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+Add the three env vars in **Vercel → Project → Settings → Environment Variables**, then redeploy. The PWA is installable on iOS Safari (Share → Add to Home Screen) and Android Chrome (Install app).
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+## Tuning
 
-## Deploy on Vercel
+| Variable | Default | Effect |
+|---|---|---|
+| `NEXT_PUBLIC_LISTEN_RADIUS_M` | `50` | How close (meters) a listener must be to a pin to hear it. |
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+## Limits & honest caveats
 
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+- **GPS spoofing**: browser geolocation can be faked with devtools. The server-side distance check prevents the trivial "give me any audio file" attack, but a determined user can still send fake-but-plausible coordinates. Real anti-spoofing requires native iOS/Android APIs and is out of scope for this free-tier build.
+- **Audio moderation**: no automated content moderation. Users can report; 3 reports auto-hide a pin. For scale you'd want a real moderation pipeline (paid).
+- **Storage**: Supabase free tier is 1 GB → ~1,400 pins at 60s opus (~700 KB each). The `mp4` fallback (Safari) is larger. Plan accordingly.
+- **Bbox query cap**: requests are capped at a 5° × 5° bounding box and 500 results to keep the free DB happy. Zoom in to see pins.
+- **Browser support**: requires `MediaRecorder`, `getUserMedia`, and `navigator.geolocation`. Safari ≥ 14, Chrome/Edge/Firefox modern. Safari records to `audio/mp4`; everyone else records to `audio/webm;opus`.
+
+## Project layout
+
+```
+src/
+  app/
+    api/pins/route.ts                # GET (bbox) + POST (create)
+    api/pins/[id]/route.ts           # DELETE (own pins)
+    api/pins/[id]/listen/route.ts    # POST: server-side proximity check → signed URL
+    api/pins/[id]/report/route.ts    # POST: report a pin
+    page.tsx, layout.tsx, globals.css
+  components/
+    EchoApp.tsx                      # Top-level client wiring
+    MapView.tsx                      # Leaflet (dynamic import)
+    Recorder.tsx                     # MediaRecorder UI
+    Listener.tsx                     # Proximity-gated playback
+    Modal.tsx, RegisterSW.tsx
+  lib/
+    api.ts                           # Client → /api wrappers
+    geo.ts                           # Haversine, bbox validation
+    geolocation.ts                   # navigator.geolocation helpers
+    env.ts                           # Lazy env getters
+    supabase/{browser,server}.ts
+public/
+  manifest.webmanifest, sw.js, icon-192.png, icon-512.png
+supabase/
+  schema.sql                         # Run this once in the SQL editor
+scripts/
+  gen-icons.mjs                      # Regenerate PWA icons (no deps)
+```
