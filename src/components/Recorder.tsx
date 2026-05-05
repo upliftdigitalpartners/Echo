@@ -4,6 +4,8 @@ import { useEffect, useRef, useState } from "react";
 import type { Theme } from "@/lib/api";
 import { fetchPlace } from "@/lib/api";
 import type { Pos } from "@/lib/geolocation";
+import { blobToPeaks } from "@/lib/peaks";
+import Waveform from "@/components/Waveform";
 
 const MAX_MS = 60_000;
 
@@ -19,6 +21,8 @@ export type DropOptions = {
   theme?: Theme | null;
   audibleFrom?: string | null;
   expiresInHours?: number | null;
+  peaks?: number[] | null;
+  photoBlob?: Blob | null;
 };
 
 const THEMES: { id: Theme; label: string; color: string }[] = [
@@ -56,6 +60,9 @@ export default function Recorder({
   const [elapsed, setElapsed] = useState(0);
   const [aiPrompt, setAiPrompt] = useState<string | null>(null);
   const [placeName, setPlaceName] = useState<string | null>(null);
+  const [peaks, setPeaks] = useState<number[] | null>(null);
+  const [photo, setPhoto] = useState<{ blob: Blob; url: string } | null>(null);
+  const audioElRef = useRef<HTMLAudioElement | null>(null);
 
   const mediaRef = useRef<MediaRecorder | null>(null);
   const chunksRef = useRef<Blob[]>([]);
@@ -131,6 +138,9 @@ export default function Recorder({
         cleanupStream();
         setElapsed(durationMs);
         setState({ kind: "done", blob, durationMs, url: URL.createObjectURL(blob) });
+        // Compute waveform peaks (best-effort; fine if it fails on a codec
+        // the browser can't decode like Safari + opus webm).
+        blobToPeaks(blob).then((p) => p && setPeaks(p));
       };
 
       rec.start();
@@ -153,8 +163,32 @@ export default function Recorder({
 
   function reset() {
     if (state.kind === "done") URL.revokeObjectURL(state.url);
+    if (photo) URL.revokeObjectURL(photo.url);
+    setPhoto(null);
+    setPeaks(null);
     setState({ kind: "idle" });
     setElapsed(0);
+  }
+
+  function onPickPhoto(e: React.ChangeEvent<HTMLInputElement>) {
+    const f = e.target.files?.[0];
+    e.target.value = ""; // allow re-picking the same file
+    if (!f) return;
+    if (f.size > 5_000_000) {
+      setErr("Photo too large (5 MB max).");
+      return;
+    }
+    if (!/^image\//.test(f.type)) {
+      setErr("Pick an image file.");
+      return;
+    }
+    if (photo) URL.revokeObjectURL(photo.url);
+    setPhoto({ blob: f, url: URL.createObjectURL(f) });
+  }
+
+  function clearPhoto() {
+    if (photo) URL.revokeObjectURL(photo.url);
+    setPhoto(null);
   }
 
   async function submit() {
@@ -169,6 +203,8 @@ export default function Recorder({
           theme,
           audibleFrom: audibleFrom ? new Date(audibleFrom).toISOString() : null,
           expiresInHours,
+          peaks,
+          photoBlob: photo?.blob ?? null,
         }
       );
     } catch (e) {
@@ -230,7 +266,15 @@ export default function Recorder({
 
       {state.kind === "done" && (
         <div className="flex flex-col gap-3">
-          <audio src={state.url} controls className="w-full" />
+          <audio
+            ref={audioElRef}
+            src={state.url}
+            controls
+            className="w-full"
+          />
+          {peaks && (
+            <Waveform peaks={peaks} audio={audioElRef.current} height={36} />
+          )}
 
           <input
             value={title}
@@ -287,6 +331,40 @@ export default function Recorder({
                 );
               })}
             </div>
+          </div>
+
+          <div>
+            <p className="mb-1.5 text-xs uppercase tracking-wide text-zinc-500">
+              Photo (optional, also locked to GPS)
+            </p>
+            {photo ? (
+              <div className="relative">
+                {/* eslint-disable-next-line @next/next/no-img-element */}
+                <img
+                  src={photo.url}
+                  alt="attached"
+                  className="max-h-48 w-full rounded-lg object-cover"
+                />
+                <button
+                  type="button"
+                  onClick={clearPhoto}
+                  className="absolute right-2 top-2 rounded-full bg-black/70 px-2 py-1 text-xs text-zinc-200 hover:bg-black"
+                >
+                  Remove
+                </button>
+              </div>
+            ) : (
+              <label className="flex cursor-pointer items-center justify-center rounded-lg border border-dashed border-zinc-700 bg-zinc-900 px-3 py-3 text-xs text-zinc-400 hover:border-amber-500/60 hover:text-amber-300">
+                <input
+                  type="file"
+                  accept="image/*"
+                  capture="environment"
+                  onChange={onPickPhoto}
+                  className="hidden"
+                />
+                + Attach a photo
+              </label>
+            )}
           </div>
 
           <details className="rounded-lg border border-zinc-800 bg-zinc-900/50 px-3 py-2">

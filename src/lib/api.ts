@@ -48,10 +48,13 @@ export async function createPin(input: {
   audioBlob: Blob;
   title?: string;
   theme?: Theme | null;
-  audibleFrom?: string | null; // ISO date — when others can listen
+  audibleFrom?: string | null;
   expiresInHours?: number | null;
+  peaks?: number[] | null;
+  photoBlob?: Blob | null;
 }): Promise<{ pin: PinSummary; warning?: string }> {
   const audioBase64 = await blobToBase64(input.audioBlob);
+  const photoBase64 = input.photoBlob ? await blobToBase64(input.photoBlob) : null;
   const r = await fetch("/api/pins", {
     method: "POST",
     headers: { "content-type": "application/json" },
@@ -64,7 +67,10 @@ export async function createPin(input: {
       theme: input.theme ?? null,
       audibleFrom: input.audibleFrom ?? null,
       expiresInHours: input.expiresInHours ?? null,
+      peaks: input.peaks ?? null,
       audioBase64,
+      photoBase64,
+      photoMime: input.photoBlob?.type ?? null,
     }),
   });
   const j = await r.json();
@@ -75,7 +81,7 @@ export async function createPin(input: {
 export async function requestListen(
   pinId: string,
   pos: { lat: number; lng: number }
-): Promise<{ url: string; distanceM: number }> {
+): Promise<{ url: string; distanceM: number; photoUrl: string | null }> {
   const r = await fetch(`/api/pins/${pinId}/listen`, {
     method: "POST",
     headers: { "content-type": "application/json" },
@@ -93,12 +99,22 @@ export async function requestListen(
     err.radiusM = j.radiusM;
     throw err;
   }
-  return j as { url: string; distanceM: number };
+  return j as { url: string; distanceM: number; photoUrl: string | null };
 }
 
 export async function reportPin(pinId: string): Promise<void> {
   const r = await fetch(`/api/pins/${pinId}/report`, { method: "POST" });
   if (!r.ok) throw new Error((await r.json()).error ?? "report failed");
+}
+
+export type SearchHit = PinSummary & { rank: number };
+
+export async function searchPins(q: string): Promise<SearchHit[]> {
+  const u = new URL("/api/search", location.origin);
+  u.searchParams.set("q", q);
+  const r = await fetch(u, { cache: "no-store" });
+  if (!r.ok) throw new Error((await r.json()).error ?? "search failed");
+  return ((await r.json()).pins ?? []) as SearchHit[];
 }
 
 export async function fetchMyPins(): Promise<MyPin[]> {
@@ -122,6 +138,8 @@ export async function fetchPin(id: string): Promise<PinSummary | null> {
 export type PinDetail = PinSummary & {
   transcript: string | null;
   transcript_language: string | null;
+  peaks: number[] | null;
+  has_photo: boolean;
 };
 
 export async function fetchPinDetail(id: string): Promise<PinDetail | null> {

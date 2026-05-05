@@ -16,6 +16,10 @@ import Recorder, { type RecordResult, type DropOptions } from "@/components/Reco
 import Listener from "@/components/Listener";
 import MyEchoes from "@/components/MyEchoes";
 import TourModal from "@/components/TourModal";
+import SearchBox from "@/components/SearchBox";
+import Toast, { type ToastData } from "@/components/Toast";
+import { hasHeard, markHeard } from "@/lib/heard";
+import { distanceMeters } from "@/lib/geo";
 
 // Leaflet touches `window`, so render the map only on the client.
 const MapView = dynamic(() => import("@/components/MapView"), { ssr: false });
@@ -23,6 +27,7 @@ const MapView = dynamic(() => import("@/components/MapView"), { ssr: false });
 type Bbox = { minLat: number; minLng: number; maxLat: number; maxLng: number };
 
 const MAX_DROP_ACCURACY_M = 50;
+const NEARBY_NOTIFY_M = 80;
 
 export default function EchoApp() {
   const [me, setMe] = useState<Pos | null>(null);
@@ -35,6 +40,8 @@ export default function EchoApp() {
   const [recordOpen, setRecordOpen] = useState(false);
   const [myEchoesOpen, setMyEchoesOpen] = useState(false);
   const [tourOpen, setTourOpen] = useState(false);
+  const [toast, setToast] = useState<ToastData | null>(null);
+  const lastNotifiedRef = useRef<string | null>(null);
   const [activePinId, setActivePinId] = useState<string | null>(null);
   const [focusTo, setFocusTo] = useState<{ lat: number; lng: number; key: number } | null>(null);
   const activePin = useMemo(
@@ -61,6 +68,69 @@ export default function EchoApp() {
     })();
     return () => stop?.();
   }, []);
+
+  // Foreground geofence: when our position changes, look for the nearest
+  // unheard pin within NEARBY_NOTIFY_M and surface a toast (+ vibrate +
+  // optional Notification API). Only one toast at a time, and we don't
+  // re-notify for the same pin in a session.
+  useEffect(() => {
+    if (!me || pins.length === 0) return;
+    let nearest: { pin: PinSummary; dist: number } | null = null;
+    for (const p of pins) {
+      if (hasHeard(p.id)) continue;
+      if (p.audible_from && new Date(p.audible_from).getTime() > Date.now()) continue;
+      const d = distanceMeters(me.lat, me.lng, p.lat, p.lng);
+      if (d <= NEARBY_NOTIFY_M && (!nearest || d < nearest.dist)) {
+        nearest = { pin: p, dist: d };
+      }
+    }
+    if (!nearest) return;
+    if (nearest.pin.id === lastNotifiedRef.current) return;
+    if (activePinId === nearest.pin.id) return;
+
+    lastNotifiedRef.current = nearest.pin.id;
+    if (typeof navigator !== "undefined" && navigator.vibrate) {
+      navigator.vibrate([60, 40, 60]);
+    }
+    if (
+      typeof window !== "undefined" &&
+      "Notification" in window &&
+      Notification.permission === "granted" &&
+      document.hidden
+    ) {
+      try {
+        new Notification("Echo nearby", {
+          body: nearest.pin.title ?? `${Math.round(nearest.dist)}m away`,
+          icon: "/icon-192.png",
+          tag: nearest.pin.id,
+        });
+      } catch {
+        /* ignore */
+      }
+    }
+    setToast({
+      id: nearest.pin.id,
+      title: nearest.pin.title ?? "Echo nearby",
+      body: `${Math.round(nearest.dist)}m away — tap to listen`,
+      onClick: () => setActivePinId(nearest!.pin.id),
+    });
+  }, [me, pins, activePinId]);
+
+  // Mark a pin as heard when its Listener modal closes (regardless of whether
+  // playback succeeded — in practice they tapped to engage with it).
+  useEffect(() => {
+    if (activePinId) markHeard(activePinId);
+  }, [activePinId]);
+
+  // Ask for Notification permission once after the user signals interest by
+  // opening the recorder. Don't ambush them on first paint.
+  useEffect(() => {
+    if (!recordOpen) return;
+    if (typeof window === "undefined" || !("Notification" in window)) return;
+    if (Notification.permission === "default") {
+      Notification.requestPermission().catch(() => {});
+    }
+  }, [recordOpen]);
 
   // Auto-open the listener if the URL has ?p=PIN_ID (shared link).
   useEffect(() => {
@@ -154,6 +224,16 @@ export default function EchoApp() {
           >
             Mine
           </button>
+          <SearchBox
+            onPick={(hit) => {
+              // Make sure the hit is in the pins list so the Listener can resolve it.
+              setPins((prev) =>
+                prev.some((p) => p.id === hit.id) ? prev : [hit, ...prev]
+              );
+              setFocusTo({ lat: hit.lat, lng: hit.lng, key: Date.now() });
+              setActivePinId(hit.id);
+            }}
+          />
         </div>
         {(locErr || authErr) && (
           <div className="pointer-events-auto max-w-xs rounded-md bg-red-950/80 px-3 py-2 text-center text-xs text-red-200 ring-1 ring-red-900 backdrop-blur">
@@ -199,6 +279,8 @@ export default function EchoApp() {
           {me ? "+ Drop an Echo" : "Waiting for GPS…"}
         </button>
       </div>
+
+      <Toast toast={toast} onDismiss={() => setToast(null)} />
 
       <Modal open={recordOpen} onClose={() => setRecordOpen(false)}>
         <Recorder

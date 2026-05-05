@@ -45,7 +45,9 @@ export const POST = safe(async (
 
   const { data: pin, error } = await sb
     .from("pins")
-    .select("id, lat, lng, audio_path, creator_id, audible_from, expires_at, moderation_status")
+    .select(
+      "id, lat, lng, audio_path, photo_path, creator_id, audible_from, expires_at, moderation_status"
+    )
     .eq("id", id)
     .maybeSingle();
 
@@ -85,18 +87,20 @@ export const POST = safe(async (
   }
 
   const admin = supabaseAdmin();
-  const signed = await admin.storage
-    .from("audio")
-    .createSignedUrl(pin.audio_path, 60);
+  const [audioSigned, photoSigned] = await Promise.all([
+    admin.storage.from("audio").createSignedUrl(pin.audio_path, 60),
+    pin.photo_path
+      ? admin.storage.from("photos").createSignedUrl(pin.photo_path, 60)
+      : Promise.resolve({ data: null, error: null } as const),
+  ]);
 
-  if (signed.error || !signed.data) {
+  if (audioSigned.error || !audioSigned.data) {
     return NextResponse.json(
-      { error: signed.error?.message ?? "sign failed" },
+      { error: audioSigned.error?.message ?? "sign failed" },
       { status: 500 }
     );
   }
 
-  // Record the play (anonymous: hashed listener key). Don't count owner re-plays.
   if (!isOwner) {
     await admin
       .from("pin_plays")
@@ -107,7 +111,8 @@ export const POST = safe(async (
   }
 
   return NextResponse.json({
-    url: signed.data.signedUrl,
+    url: audioSigned.data.signedUrl,
+    photoUrl: photoSigned?.data?.signedUrl ?? null,
     distanceM: Math.round(dist),
   });
 });

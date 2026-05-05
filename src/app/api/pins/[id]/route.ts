@@ -17,13 +17,15 @@ export const GET = safe(async (
   const { data, error } = await sb
     .from("pins")
     .select(
-      "id, lat, lng, created_at, title, duration_ms, theme, vibe, audible_from, transcript, transcript_language"
+      "id, lat, lng, created_at, title, duration_ms, theme, vibe, audible_from, transcript, transcript_language, peaks, photo_path"
     )
     .eq("id", id)
     .maybeSingle();
   if (error) return NextResponse.json({ error: error.message }, { status: 500 });
   if (!data) return NextResponse.json({ error: "not found" }, { status: 404 });
-  return NextResponse.json({ pin: data });
+  // Expose has_photo as a boolean — never leak the storage path.
+  const { photo_path, ...rest } = data as { photo_path: string | null } & Record<string, unknown>;
+  return NextResponse.json({ pin: { ...rest, has_photo: !!photo_path } });
 });
 
 export const DELETE = safe(async (

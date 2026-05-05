@@ -112,6 +112,45 @@ export const POST = safe(async (req: Request) => {
     return NextResponse.json({ error: up.error.message }, { status: 500 });
   }
 
+  // ===== optional photo =====
+  let photoPath: string | null = null;
+  const photoBase64 = typeof b.photoBase64 === "string" ? b.photoBase64 : "";
+  const photoMime = typeof b.photoMime === "string" ? b.photoMime : "";
+  if (photoBase64 && photoBase64.length > 100) {
+    if (photoBase64.length > 7_000_000) {
+      await admin.storage.from("audio").remove([path]);
+      return NextResponse.json({ error: "photo too large" }, { status: 413 });
+    }
+    if (!/^image\/(jpe?g|png|webp|heic|heif)/.test(photoMime)) {
+      await admin.storage.from("audio").remove([path]);
+      return NextResponse.json({ error: "bad photo mime" }, { status: 400 });
+    }
+    const photoExt =
+      photoMime.includes("png") ? "png" :
+      photoMime.includes("webp") ? "webp" :
+      photoMime.includes("heic") || photoMime.includes("heif") ? "heic" : "jpg";
+    const photoBuf = Buffer.from(photoBase64, "base64");
+    photoPath = `${user.id}/${crypto.randomUUID()}.${photoExt}`;
+    const phUp = await admin.storage.from("photos").upload(photoPath, photoBuf, {
+      contentType: photoMime,
+      cacheControl: "3600",
+      upsert: false,
+    });
+    if (phUp.error) {
+      await admin.storage.from("audio").remove([path]);
+      return NextResponse.json({ error: phUp.error.message }, { status: 500 });
+    }
+  }
+
+  // ===== peaks (optional, validated as number[]) =====
+  let peaks: number[] | null = null;
+  if (Array.isArray(b.peaks) && b.peaks.length > 0 && b.peaks.length <= 64) {
+    const valid = (b.peaks as unknown[]).every(
+      (n) => typeof n === "number" && Number.isFinite(n) && n >= 0 && n <= 1
+    );
+    if (valid) peaks = b.peaks as number[];
+  }
+
   // ===== AI pipeline (no-ops gracefully if GROQ_API_KEY is unset) =====
   let transcript: string | null = null;
   let transcriptLang: string | null = null;
@@ -152,6 +191,8 @@ export const POST = safe(async (req: Request) => {
       lng,
       geog: `SRID=4326;POINT(${lng} ${lat})`,
       audio_path: path,
+      photo_path: photoPath,
+      peaks,
       duration_ms: Math.round(durationMs),
       title: finalTitle,
       title_auto: !userTitle && aiTitle !== null,
@@ -169,6 +210,7 @@ export const POST = safe(async (req: Request) => {
 
   if (ins.error) {
     await admin.storage.from("audio").remove([path]);
+    if (photoPath) await admin.storage.from("photos").remove([photoPath]);
     return NextResponse.json({ error: ins.error.message }, { status: 500 });
   }
 

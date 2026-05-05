@@ -14,6 +14,7 @@ import {
 } from "@/lib/api";
 import { distanceMeters } from "@/lib/geo";
 import type { Pos } from "@/lib/geolocation";
+import Waveform from "@/components/Waveform";
 
 const VIBE_LABELS: Record<Vibe, { label: string; color: string }> = {
   joy:     { label: "joy",     color: "bg-yellow-400/15 text-yellow-300" },
@@ -83,7 +84,7 @@ function timeAgo(iso: string | null): string | null {
 
 type State =
   | { kind: "loading" }
-  | { kind: "ready"; url: string; distanceM: number }
+  | { kind: "ready"; url: string; distanceM: number; photoUrl: string | null }
   | { kind: "too_far"; distanceM: number; radiusM: number }
   | { kind: "no_location" }
   | { kind: "time_capsule"; audibleFrom: string }
@@ -147,7 +148,12 @@ export default function Listener({
       try {
         const r = await requestListen(pin.id, { lat: me.lat, lng: me.lng });
         if (cancelled) return;
-        setState({ kind: "ready", url: r.url, distanceM: r.distanceM });
+        setState({
+          kind: "ready",
+          url: r.url,
+          distanceM: r.distanceM,
+          photoUrl: r.photoUrl,
+        });
         // Refresh play count after we just added one.
         fetchPinStats(pin.id).then((s) => !cancelled && setStats(s)).catch(() => {});
       } catch (e) {
@@ -295,11 +301,26 @@ export default function Listener({
 
       {state.kind === "ready" && (
         <>
+          {state.photoUrl && (
+            // eslint-disable-next-line @next/next/no-img-element
+            <img
+              src={state.photoUrl}
+              alt="Echo photo"
+              className="w-full max-h-72 rounded-lg object-cover"
+            />
+          )}
           <audio ref={audioRef} src={state.url} controls autoPlay className="w-full" />
+          {detail?.peaks && (
+            <Waveform peaks={detail.peaks} audio={audioRef.current} height={36} />
+          )}
           <p className="text-xs text-zinc-500">
             You&apos;re {state.distanceM}m away. Link expires in 60s.
           </p>
         </>
+      )}
+
+      {state.kind === "too_far" && detail?.has_photo && (
+        <p className="text-xs text-zinc-500">📷 A photo unlocks here too.</p>
       )}
 
       {state.kind === "error" && (
