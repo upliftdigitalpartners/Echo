@@ -70,20 +70,22 @@ export default function Recorder({
       mediaRef.current = rec;
       chunksRef.current = [];
 
+      const startedAt = performance.now();
+
       rec.ondataavailable = (e) => {
         if (e.data && e.data.size > 0) chunksRef.current.push(e.data);
       };
       rec.onstop = () => {
         const blob = new Blob(chunksRef.current, { type: rec.mimeType || "audio/webm" });
-        const startedAt =
-          state.kind === "recording" ? state.startedAt : performance.now();
-        const durationMs = Math.min(MAX_MS, Math.round(performance.now() - startedAt));
+        const durationMs = Math.max(
+          1,
+          Math.min(MAX_MS, Math.round(performance.now() - startedAt))
+        );
         cleanupStream();
         setElapsed(durationMs);
         setState({ kind: "done", blob, durationMs, url: URL.createObjectURL(blob) });
       };
 
-      const startedAt = performance.now();
       rec.start();
       setState({ kind: "recording", startedAt });
       setElapsed(0);
