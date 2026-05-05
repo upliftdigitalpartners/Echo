@@ -3,6 +3,7 @@ import { supabaseRoute, supabaseAdmin } from "@/lib/supabase/server";
 import { isFiniteCoord, distanceMeters } from "@/lib/geo";
 import { LISTEN_RADIUS_M } from "@/lib/env";
 import { safe } from "@/lib/safeRoute";
+import { rateAllow, LIMITS } from "@/lib/rateLimit";
 
 export const runtime = "nodejs";
 
@@ -15,6 +16,13 @@ export const POST = safe(async (
   const { id } = await ctx.params;
   if (!/^[0-9a-f-]{36}$/i.test(id)) {
     return NextResponse.json({ error: "bad id" }, { status: 400 });
+  }
+
+  if (!(await rateAllow(req, "pin.listen", LIMITS.PIN_LISTEN))) {
+    return NextResponse.json(
+      { error: "too many requests" },
+      { status: 429 }
+    );
   }
 
   let body: unknown;

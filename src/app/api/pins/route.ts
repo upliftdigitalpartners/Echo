@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { supabaseRoute, supabaseAdmin } from "@/lib/supabase/server";
 import { isFiniteCoord } from "@/lib/geo";
 import { safe } from "@/lib/safeRoute";
+import { rateAllow, LIMITS } from "@/lib/rateLimit";
 
 export const runtime = "nodejs";
 
@@ -37,6 +38,13 @@ export const POST = safe(async (req: Request) => {
   const { data: userRes } = await sb.auth.getUser();
   const user = userRes.user;
   if (!user) return NextResponse.json({ error: "not signed in" }, { status: 401 });
+
+  if (!(await rateAllow(req, "pin.create", LIMITS.PIN_CREATE))) {
+    return NextResponse.json(
+      { error: "too many drops — try again later" },
+      { status: 429 }
+    );
+  }
 
   let body: unknown;
   try {

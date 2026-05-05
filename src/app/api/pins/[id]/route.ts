@@ -4,6 +4,26 @@ import { safe } from "@/lib/safeRoute";
 
 export const runtime = "nodejs";
 
+// GET /api/pins/[id] — fetch one pin (RLS hides reported pins unless you own it).
+export const GET = safe(async (
+  _req: Request,
+  ctx: { params: Promise<{ id: string }> }
+) => {
+  const { id } = await ctx.params;
+  if (!/^[0-9a-f-]{36}$/i.test(id)) {
+    return NextResponse.json({ error: "bad id" }, { status: 400 });
+  }
+  const sb = await supabaseRoute();
+  const { data, error } = await sb
+    .from("pins")
+    .select("id, lat, lng, created_at, title, duration_ms")
+    .eq("id", id)
+    .maybeSingle();
+  if (error) return NextResponse.json({ error: error.message }, { status: 500 });
+  if (!data) return NextResponse.json({ error: "not found" }, { status: 404 });
+  return NextResponse.json({ pin: data });
+});
+
 export const DELETE = safe(async (
   _req: Request,
   ctx: { params: Promise<{ id: string }> }

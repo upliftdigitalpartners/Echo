@@ -9,6 +9,8 @@ export type PinSummary = {
   duration_ms: number;
 };
 
+export type MyPin = PinSummary & { hidden: boolean };
+
 export async function fetchPinsInBbox(b: {
   minLat: number;
   minLng: number;
@@ -77,6 +79,24 @@ export async function requestListen(
 export async function reportPin(pinId: string): Promise<void> {
   const r = await fetch(`/api/pins/${pinId}/report`, { method: "POST" });
   if (!r.ok) throw new Error((await r.json()).error ?? "report failed");
+}
+
+export async function fetchMyPins(): Promise<MyPin[]> {
+  const r = await fetch("/api/pins/me", { cache: "no-store" });
+  if (!r.ok) throw new Error((await r.json()).error ?? "fetch failed");
+  return (await r.json()).pins as MyPin[];
+}
+
+export async function deletePin(id: string): Promise<void> {
+  const r = await fetch(`/api/pins/${id}`, { method: "DELETE" });
+  if (!r.ok) throw new Error((await r.json()).error ?? "delete failed");
+}
+
+export async function fetchPin(id: string): Promise<PinSummary | null> {
+  const r = await fetch(`/api/pins/${id}`, { cache: "no-store" });
+  if (r.status === 404) return null;
+  if (!r.ok) throw new Error((await r.json()).error ?? "fetch failed");
+  return (await r.json()).pin as PinSummary;
 }
 
 function blobToBase64(blob: Blob): Promise<string> {

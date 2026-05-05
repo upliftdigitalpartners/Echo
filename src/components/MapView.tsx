@@ -13,6 +13,7 @@ type Props = {
   listenRadiusM: number;
   onMoveEnd: (b: { minLat: number; minLng: number; maxLat: number; maxLng: number }) => void;
   onPinClick: (id: string) => void;
+  focusTo?: { lat: number; lng: number; key: number } | null;
 };
 
 export default function MapView({
@@ -22,6 +23,7 @@ export default function MapView({
   listenRadiusM,
   onMoveEnd,
   onPinClick,
+  focusTo,
 }: Props) {
   const containerRef = useRef<HTMLDivElement>(null);
   const mapRef = useRef<LMap | null>(null);
@@ -49,11 +51,16 @@ export default function MapView({
         attributionControl: true,
       }).setView(center, initialCenter ? 17 : 2);
 
-      L.tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png", {
-        maxZoom: 19,
-        attribution:
-          '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>',
-      }).addTo(map);
+      // CARTO Dark Matter — free, attribution required, matches the dark UI.
+      L.tileLayer(
+        "https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png",
+        {
+          maxZoom: 19,
+          subdomains: "abcd",
+          attribution:
+            '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> &copy; <a href="https://carto.com/attributions">CARTO</a>',
+        }
+      ).addTo(map);
 
       L.control.zoom({ position: "bottomright" }).addTo(map);
 
@@ -93,6 +100,12 @@ export default function MapView({
     mapRef.current.setView([initialCenter.lat, initialCenter.lng], 17);
     centeredRef.current = true;
   }, [initialCenter]);
+
+  // Pan to focusTo whenever its key changes (deep links, "Map" from My Echoes).
+  useEffect(() => {
+    if (!mapRef.current || !focusTo) return;
+    mapRef.current.flyTo([focusTo.lat, focusTo.lng], 17, { duration: 0.6 });
+  }, [focusTo]);
 
   // Re-render pin markers on change.
   useEffect(() => {

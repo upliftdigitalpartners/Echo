@@ -5,6 +5,35 @@ import { requestListen, reportPin, type PinSummary } from "@/lib/api";
 import { distanceMeters } from "@/lib/geo";
 import type { Pos } from "@/lib/geolocation";
 
+function ShareButton({ pinId, title }: { pinId: string; title: string | null }) {
+  const [copied, setCopied] = useState(false);
+  async function share() {
+    const url = `${location.origin}/p/${pinId}`;
+    const text = title ? `Echo: ${title}` : "Echo";
+    const data: ShareData = { title: text, url };
+    if (typeof navigator !== "undefined" && navigator.share) {
+      try {
+        await navigator.share(data);
+        return;
+      } catch {
+        /* user cancelled — fall through to clipboard */
+      }
+    }
+    try {
+      await navigator.clipboard.writeText(url);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1500);
+    } catch {
+      /* ignore */
+    }
+  }
+  return (
+    <button onClick={share} className="text-xs text-zinc-300 hover:text-amber-400">
+      {copied ? "Copied" : "Share"}
+    </button>
+  );
+}
+
 type State =
   | { kind: "loading" }
   | { kind: "ready"; url: string; distanceM: number }
@@ -129,12 +158,15 @@ export default function Listener({
         >
           {reported ? "Reported" : "Report"}
         </button>
-        <button
-          onClick={onClose}
-          className="text-sm text-zinc-300 hover:text-zinc-100"
-        >
-          Close
-        </button>
+        <div className="flex items-center gap-3">
+          <ShareButton pinId={pin.id} title={pin.title} />
+          <button
+            onClick={onClose}
+            className="text-sm text-zinc-300 hover:text-zinc-100"
+          >
+            Close
+          </button>
+        </div>
       </div>
     </div>
   );
