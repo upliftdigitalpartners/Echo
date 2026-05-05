@@ -12,7 +12,7 @@ import { ensureAnonUser } from "@/lib/supabase/browser";
 import { getCurrentPosition, watchPosition, type Pos } from "@/lib/geolocation";
 import { LISTEN_RADIUS_M } from "@/lib/env";
 import Modal from "@/components/Modal";
-import Recorder, { type RecordResult } from "@/components/Recorder";
+import Recorder, { type RecordResult, type DropOptions } from "@/components/Recorder";
 import Listener from "@/components/Listener";
 import MyEchoes from "@/components/MyEchoes";
 
@@ -95,7 +95,7 @@ export default function EchoApp() {
   }, []);
 
   const onSubmitRecording = useCallback(
-    async (r: RecordResult, title?: string) => {
+    async (r: RecordResult, opts?: DropOptions) => {
       // Always re-read GPS at drop time so the pin lands at the *current* spot,
       // not a stale fix. Reject if accuracy is too poor to trust.
       const pos = await getCurrentPosition().catch(() => me);
@@ -105,15 +105,19 @@ export default function EchoApp() {
           `GPS accuracy is ${Math.round(pos.accuracyM)}m — too imprecise to drop a pin (need <${MAX_DROP_ACCURACY_M}m). Move outside or wait a moment.`
         );
       }
-      const pin = await createPin({
+      const result = await createPin({
         lat: pos.lat,
         lng: pos.lng,
         durationMs: r.durationMs,
         audioBlob: r.blob,
-        title,
+        title: opts?.title,
+        theme: opts?.theme ?? null,
+        audibleFrom: opts?.audibleFrom ?? null,
+        expiresInHours: opts?.expiresInHours ?? null,
       });
-      setPins((prev) => [pin, ...prev.filter((p) => p.id !== pin.id)]);
+      setPins((prev) => [result.pin, ...prev.filter((p) => p.id !== result.pin.id)]);
       setRecordOpen(false);
+      if (result.warning) alert(result.warning);
     },
     [me]
   );
@@ -190,6 +194,7 @@ export default function EchoApp() {
         <Recorder
           onCancel={() => setRecordOpen(false)}
           onSubmit={onSubmitRecording}
+          me={me}
         />
       </Modal>
 

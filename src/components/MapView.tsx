@@ -1,9 +1,9 @@
 "use client";
 
-import { useEffect, useRef } from "react";
-import type { Map as LMap, Marker, LayerGroup, LatLngBounds, Circle } from "leaflet";
+import { useEffect, useRef, useState } from "react";
+import type { Map as LMap, Marker, LayerGroup, Layer, LatLngBounds, Circle } from "leaflet";
 import "leaflet/dist/leaflet.css";
-import type { PinSummary } from "@/lib/api";
+import type { PinSummary, Theme, Vibe } from "@/lib/api";
 import type { Pos } from "@/lib/geolocation";
 
 type Props = {
@@ -15,6 +15,34 @@ type Props = {
   onPinClick: (id: string) => void;
   focusTo?: { lat: number; lng: number; key: number } | null;
 };
+
+// Tailwind hex equivalents (Leaflet markers use inline styles, not classes).
+const THEME_COLORS: Record<Theme, string> = {
+  love: "#fb7185",     // rose-400
+  secret: "#a78bfa",   // violet-400
+  story: "#fbbf24",    // amber-400
+  art: "#34d399",      // emerald-400
+  advice: "#38bdf8",   // sky-400
+  warning: "#f97316",  // orange-500
+};
+const VIBE_COLORS: Record<Vibe, string> = {
+  joy: "#facc15",      // yellow-400
+  grief: "#94a3b8",    // slate-400
+  awe: "#a78bfa",      // violet-400
+  anger: "#f87171",    // red-400
+  calm: "#67e8f9",     // cyan-300
+  playful: "#f472b6",  // pink-400
+  mundane: "#9ca3af",  // gray-400
+};
+const DEFAULT_PIN = "#fbbf24"; // amber-400
+
+function pinColor(p: PinSummary): string {
+  if (p.theme && THEME_COLORS[p.theme]) return THEME_COLORS[p.theme];
+  if (p.vibe && VIBE_COLORS[p.vibe]) return VIBE_COLORS[p.vibe];
+  return DEFAULT_PIN;
+}
+
+const HEATMAP_MAX_ZOOM = 13; // below this zoom, show heatmap instead of pins
 
 export default function MapView({
   initialCenter,
@@ -28,6 +56,7 @@ export default function MapView({
   const containerRef = useRef<HTMLDivElement>(null);
   const mapRef = useRef<LMap | null>(null);
   const pinLayerRef = useRef<LayerGroup | null>(null);
+  const heatLayerRef = useRef<Layer | null>(null);
   const meMarkerRef = useRef<Marker | null>(null);
   const meAccuracyRef = useRef<Circle | null>(null);
   const meRadiusRef = useRef<Circle | null>(null);
@@ -36,11 +65,15 @@ export default function MapView({
   onMoveEndRef.current = onMoveEnd;
   onPinClickRef.current = onPinClick;
 
+  const [zoom, setZoom] = useState<number>(2);
+
   useEffect(() => {
     if (!containerRef.current || mapRef.current) return;
     let cancelled = false;
     (async () => {
       const L = (await import("leaflet")).default;
+      // Side-effect import attaches L.heatLayer.
+      await import("leaflet.heat");
       if (cancelled || !containerRef.current) return;
 
       const center: [number, number] = initialCenter
@@ -51,7 +84,6 @@ export default function MapView({
         attributionControl: true,
       }).setView(center, initialCenter ? 17 : 2);
 
-      // CARTO Dark Matter — free, attribution required, matches the dark UI.
       L.tileLayer(
         "https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png",
         {
@@ -67,6 +99,7 @@ export default function MapView({
       const layer = L.layerGroup().addTo(map);
       mapRef.current = map;
       pinLayerRef.current = layer;
+      setZoom(map.getZoom());
 
       const fire = () => {
         const b: LatLngBounds = map.getBounds();
@@ -76,9 +109,9 @@ export default function MapView({
           maxLat: b.getNorth(),
           maxLng: b.getEast(),
         });
+        setZoom(map.getZoom());
       };
       map.on("moveend", fire);
-      // Initial fetch.
       fire();
     })();
     return () => {
@@ -86,6 +119,7 @@ export default function MapView({
       mapRef.current?.remove();
       mapRef.current = null;
       pinLayerRef.current = null;
+      heatLayerRef.current = null;
       meMarkerRef.current = null;
       meAccuracyRef.current = null;
       meRadiusRef.current = null;
@@ -93,7 +127,6 @@ export default function MapView({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Recenter once we get an initial fix (and no manual pan yet).
   const centeredRef = useRef(false);
   useEffect(() => {
     if (centeredRef.current || !mapRef.current || !initialCenter) return;
@@ -101,39 +134,64 @@ export default function MapView({
     centeredRef.current = true;
   }, [initialCenter]);
 
-  // Pan to focusTo whenever its key changes (deep links, "Map" from My Echoes).
   useEffect(() => {
     if (!mapRef.current || !focusTo) return;
     mapRef.current.flyTo([focusTo.lat, focusTo.lng], 17, { duration: 0.6 });
   }, [focusTo]);
 
-  // Re-render pin markers on change.
+  // Render pins (zoom >= HEATMAP_MAX_ZOOM) or heatmap (zoom < HEATMAP_MAX_ZOOM).
   useEffect(() => {
-    const layer = pinLayerRef.current;
-    if (!layer) return;
+    const map = mapRef.current;
+    const pinLayer = pinLayerRef.current;
+    if (!map || !pinLayer) return;
     let cancelled = false;
     (async () => {
       const L = (await import("leaflet")).default;
       if (cancelled) return;
-      layer.clearLayers();
+
+      pinLayer.clearLayers();
+      if (heatLayerRef.current) {
+        map.removeLayer(heatLayerRef.current);
+        heatLayerRef.current = null;
+      }
+
+      if (zoom < HEATMAP_MAX_ZOOM && pins.length > 0) {
+        const points = pins.map((p) => [p.lat, p.lng, 0.6] as [number, number, number]);
+        // @ts-expect-error - leaflet.heat augments L at runtime
+        const heat = L.heatLayer(points, {
+          radius: 22,
+          blur: 18,
+          maxZoom: HEATMAP_MAX_ZOOM,
+          gradient: { 0.2: "#fde68a", 0.5: "#fbbf24", 1.0: "#f59e0b" },
+        }) as Layer;
+        heat.addTo(map);
+        heatLayerRef.current = heat;
+        return;
+      }
+
       for (const p of pins) {
+        const color = pinColor(p);
+        const isCapsule = p.audible_from && new Date(p.audible_from).getTime() > Date.now();
+        const ring = isCapsule ? "ring-zinc-100/50" : "";
+        const innerStyle = `background:${color};box-shadow:0 0 0 3px rgba(0,0,0,0.5);`;
+        const outerStyle = isCapsule
+          ? `outline:1.5px dashed ${color};outline-offset:3px;border-radius:9999px;`
+          : "";
         const icon = L.divIcon({
           className: "echo-pin",
-          html:
-            '<div class="w-5 h-5 rounded-full bg-amber-400 shadow-[0_0_0_3px_rgba(0,0,0,0.45)] ring-2 ring-amber-200/80 animate-[pulse_2.5s_ease-in-out_infinite]"></div>',
+          html: `<div style="${outerStyle}"><div style="${innerStyle}" class="w-5 h-5 rounded-full ring-2 ring-white/20 ${ring}"></div></div>`,
           iconSize: [20, 20],
           iconAnchor: [10, 10],
         });
-        const m = L.marker([p.lat, p.lng], { icon }).addTo(layer);
+        const m = L.marker([p.lat, p.lng], { icon }).addTo(pinLayer);
         m.on("click", () => onPinClickRef.current(p.id));
       }
     })();
     return () => {
       cancelled = true;
     };
-  }, [pins]);
+  }, [pins, zoom]);
 
-  // Update "me" marker and accuracy ring.
   useEffect(() => {
     const map = mapRef.current;
     if (!map || !me) return;

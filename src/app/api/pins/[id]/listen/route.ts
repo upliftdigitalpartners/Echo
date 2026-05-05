@@ -3,12 +3,16 @@ import { supabaseRoute, supabaseAdmin } from "@/lib/supabase/server";
 import { isFiniteCoord, distanceMeters } from "@/lib/geo";
 import { LISTEN_RADIUS_M } from "@/lib/env";
 import { safe } from "@/lib/safeRoute";
-import { rateAllow, LIMITS } from "@/lib/rateLimit";
+import { rateAllow, LIMITS, actorKey } from "@/lib/rateLimit";
 
 export const runtime = "nodejs";
 
 // POST /api/pins/[id]/listen  body: { lat, lng }
-// Returns short-lived signed URL only if the requester is within LISTEN_RADIUS_M.
+// Returns short-lived signed URL only if all of these are true:
+//   - the requester is within LISTEN_RADIUS_M of the pin
+//   - the pin isn't expired
+//   - the pin's audible_from (time capsule) date has passed (or you're the creator)
+//   - the pin isn't blocked / hidden
 export const POST = safe(async (
   req: Request,
   ctx: { params: Promise<{ id: string }> }
@@ -19,10 +23,7 @@ export const POST = safe(async (
   }
 
   if (!(await rateAllow(req, "pin.listen", LIMITS.PIN_LISTEN))) {
-    return NextResponse.json(
-      { error: "too many requests" },
-      { status: 429 }
-    );
+    return NextResponse.json({ error: "too many requests" }, { status: 429 });
   }
 
   let body: unknown;
@@ -39,15 +40,41 @@ export const POST = safe(async (
   }
 
   const sb = await supabaseRoute();
-  // Hidden pins are filtered by the RLS select policy.
+  const { data: userRes } = await sb.auth.getUser();
+  const callerId = userRes.user?.id ?? null;
+
   const { data: pin, error } = await sb
     .from("pins")
-    .select("id, lat, lng, audio_path")
+    .select("id, lat, lng, audio_path, creator_id, audible_from, expires_at, moderation_status")
     .eq("id", id)
     .maybeSingle();
 
   if (error) return NextResponse.json({ error: error.message }, { status: 500 });
   if (!pin) return NextResponse.json({ error: "not found" }, { status: 404 });
+
+  const isOwner = callerId !== null && pin.creator_id === callerId;
+
+  if (!isOwner && pin.moderation_status === "blocked") {
+    return NextResponse.json({ error: "not found" }, { status: 404 });
+  }
+
+  if (pin.expires_at && new Date(pin.expires_at).getTime() <= Date.now()) {
+    return NextResponse.json({ error: "this Echo has expired" }, { status: 410 });
+  }
+
+  if (
+    !isOwner &&
+    pin.audible_from &&
+    new Date(pin.audible_from).getTime() > Date.now()
+  ) {
+    return NextResponse.json(
+      {
+        error: "time capsule",
+        audibleFrom: pin.audible_from,
+      },
+      { status: 423 }
+    );
+  }
 
   const dist = distanceMeters(lat, lng, pin.lat, pin.lng);
   if (dist > LISTEN_RADIUS_M) {
@@ -60,13 +87,23 @@ export const POST = safe(async (
   const admin = supabaseAdmin();
   const signed = await admin.storage
     .from("audio")
-    .createSignedUrl(pin.audio_path, 60); // 60 seconds — listen now or come back
+    .createSignedUrl(pin.audio_path, 60);
 
   if (signed.error || !signed.data) {
     return NextResponse.json(
       { error: signed.error?.message ?? "sign failed" },
       { status: 500 }
     );
+  }
+
+  // Record the play (anonymous: hashed listener key). Don't count owner re-plays.
+  if (!isOwner) {
+    await admin
+      .from("pin_plays")
+      .upsert(
+        { pin_id: pin.id, listener_key: actorKey(req) },
+        { onConflict: "pin_id,listener_key", ignoreDuplicates: true }
+      );
   }
 
   return NextResponse.json({

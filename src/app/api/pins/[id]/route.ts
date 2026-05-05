@@ -16,7 +16,9 @@ export const GET = safe(async (
   const sb = await supabaseRoute();
   const { data, error } = await sb
     .from("pins")
-    .select("id, lat, lng, created_at, title, duration_ms")
+    .select(
+      "id, lat, lng, created_at, title, duration_ms, theme, vibe, audible_from, transcript, transcript_language"
+    )
     .eq("id", id)
     .maybeSingle();
   if (error) return NextResponse.json({ error: error.message }, { status: 500 });

@@ -1,5 +1,8 @@
 "use client";
 
+export type Theme = "love" | "secret" | "story" | "art" | "advice" | "warning";
+export type Vibe = "joy" | "grief" | "awe" | "anger" | "calm" | "playful" | "mundane";
+
 export type PinSummary = {
   id: string;
   lat: number;
@@ -7,9 +10,20 @@ export type PinSummary = {
   created_at: string;
   title: string | null;
   duration_ms: number;
+  theme: Theme | null;
+  vibe: Vibe | null;
+  audible_from: string | null;
 };
 
 export type MyPin = PinSummary & { hidden: boolean };
+
+export type PlaceContext = {
+  placeName: string | null;
+  prompt: string | null;
+  context: string | null;
+};
+
+export type PinStats = { plays: number; lastHeard: string | null };
 
 export async function fetchPinsInBbox(b: {
   minLat: number;
@@ -33,7 +47,10 @@ export async function createPin(input: {
   durationMs: number;
   audioBlob: Blob;
   title?: string;
-}): Promise<PinSummary> {
+  theme?: Theme | null;
+  audibleFrom?: string | null; // ISO date — when others can listen
+  expiresInHours?: number | null;
+}): Promise<{ pin: PinSummary; warning?: string }> {
   const audioBase64 = await blobToBase64(input.audioBlob);
   const r = await fetch("/api/pins", {
     method: "POST",
@@ -44,12 +61,15 @@ export async function createPin(input: {
       durationMs: input.durationMs,
       mime: input.audioBlob.type || "audio/webm",
       title: input.title ?? null,
+      theme: input.theme ?? null,
+      audibleFrom: input.audibleFrom ?? null,
+      expiresInHours: input.expiresInHours ?? null,
       audioBase64,
     }),
   });
   const j = await r.json();
   if (!r.ok) throw new Error(j.error ?? "create failed");
-  return j.pin as PinSummary;
+  return { pin: j.pin as PinSummary, warning: j.warning };
 }
 
 export async function requestListen(
@@ -97,6 +117,50 @@ export async function fetchPin(id: string): Promise<PinSummary | null> {
   if (r.status === 404) return null;
   if (!r.ok) throw new Error((await r.json()).error ?? "fetch failed");
   return (await r.json()).pin as PinSummary;
+}
+
+export type PinDetail = PinSummary & {
+  transcript: string | null;
+  transcript_language: string | null;
+};
+
+export async function fetchPinDetail(id: string): Promise<PinDetail | null> {
+  const r = await fetch(`/api/pins/${id}`, { cache: "no-store" });
+  if (r.status === 404) return null;
+  if (!r.ok) throw new Error((await r.json()).error ?? "fetch failed");
+  return (await r.json()).pin as PinDetail;
+}
+
+export async function fetchPinStats(id: string): Promise<PinStats> {
+  const r = await fetch(`/api/pins/${id}/stats`, { cache: "no-store" });
+  if (!r.ok) throw new Error((await r.json()).error ?? "stats failed");
+  return (await r.json()) as PinStats;
+}
+
+export async function translatePin(
+  id: string,
+  lang: string
+): Promise<{ text: string; sourceLanguage: string; targetLanguage: string }> {
+  const r = await fetch(`/api/pins/${id}/translate`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ lang }),
+  });
+  const j = await r.json();
+  if (!r.ok) throw new Error(j.error ?? "translation failed");
+  return j;
+}
+
+export async function fetchPlace(
+  lat: number,
+  lng: number
+): Promise<PlaceContext> {
+  const u = new URL("/api/place", location.origin);
+  u.searchParams.set("lat", String(lat));
+  u.searchParams.set("lng", String(lng));
+  const r = await fetch(u, { cache: "no-store" });
+  if (!r.ok) return { placeName: null, prompt: null, context: null };
+  return (await r.json()) as PlaceContext;
 }
 
 function blobToBase64(blob: Blob): Promise<string> {
