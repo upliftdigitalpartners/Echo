@@ -58,6 +58,12 @@ language sql stable as $$
 $$;
 
 -- ===== updated bbox query: hide expired + non-allowed pins =====
+-- The return type changed (added theme/vibe/audible_from), so we must drop
+-- the old function first; CREATE OR REPLACE can't change return shape.
+drop function if exists public.pins_in_bbox(
+  double precision, double precision, double precision, double precision, integer
+);
+
 create or replace function public.pins_in_bbox(
   min_lat double precision,
   min_lng double precision,
