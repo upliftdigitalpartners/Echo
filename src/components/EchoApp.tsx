@@ -15,6 +15,7 @@ import Modal from "@/components/Modal";
 import Recorder, { type RecordResult, type DropOptions } from "@/components/Recorder";
 import Listener from "@/components/Listener";
 import MyEchoes from "@/components/MyEchoes";
+import TourModal from "@/components/TourModal";
 
 // Leaflet touches `window`, so render the map only on the client.
 const MapView = dynamic(() => import("@/components/MapView"), { ssr: false });
@@ -33,6 +34,7 @@ export default function EchoApp() {
 
   const [recordOpen, setRecordOpen] = useState(false);
   const [myEchoesOpen, setMyEchoesOpen] = useState(false);
+  const [tourOpen, setTourOpen] = useState(false);
   const [activePinId, setActivePinId] = useState<string | null>(null);
   const [focusTo, setFocusTo] = useState<{ lat: number; lng: number; key: number } | null>(null);
   const activePin = useMemo(
@@ -139,6 +141,14 @@ export default function EchoApp() {
         <div className="pointer-events-auto flex items-center gap-2 rounded-full bg-zinc-950/80 px-2 py-1 text-sm font-semibold tracking-tight ring-1 ring-zinc-800 backdrop-blur">
           <span className="px-2">Echo</span>
           <button
+            onClick={() => setTourOpen(true)}
+            disabled={!me}
+            className="rounded-full bg-amber-400/15 px-3 py-1 text-xs font-medium text-amber-300 hover:bg-amber-400/25 disabled:opacity-50"
+            title="AI walking tour"
+          >
+            Tour
+          </button>
+          <button
             onClick={() => setMyEchoesOpen(true)}
             className="rounded-full bg-zinc-800 px-3 py-1 text-xs font-medium text-zinc-200 hover:bg-zinc-700"
           >
@@ -207,6 +217,18 @@ export default function EchoApp() {
             onClose={() => setActivePinId(null)}
           />
         )}
+      </Modal>
+
+      <Modal open={tourOpen} onClose={() => setTourOpen(false)}>
+        <TourModal
+          me={me}
+          onClose={() => setTourOpen(false)}
+          onFocus={(lat, lng, id) => {
+            setFocusTo({ lat, lng, key: Date.now() });
+            setActivePinId(id);
+            setTourOpen(false);
+          }}
+        />
       </Modal>
 
       <Modal open={myEchoesOpen} onClose={() => setMyEchoesOpen(false)}>

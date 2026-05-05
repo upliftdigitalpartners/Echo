@@ -174,6 +174,95 @@ export async function recordPrompt(opts: {
   return out?.replace(/^["']|["']$/g, "").trim().slice(0, 200) ?? null;
 }
 
+// ===== walking tour =====
+export type TourStop = {
+  pinId: string;
+  order: number;
+  why: string; // one-line reason this stop fits the tour
+};
+export type Tour = {
+  title: string;
+  intro: string;
+  stops: TourStop[];
+};
+
+export async function generateTour(opts: {
+  prompt: string;
+  pins: Array<{
+    id: string;
+    title: string | null;
+    transcript: string | null;
+    theme: string | null;
+    vibe: string | null;
+    lat: number;
+    lng: number;
+  }>;
+  placeName: string | null;
+}): Promise<Tour | null> {
+  if (opts.pins.length === 0) return null;
+
+  const list = opts.pins
+    .slice(0, 30) // cap context window
+    .map(
+      (p, i) =>
+        `${i + 1}. id=${p.id} title="${p.title ?? "(untitled)"}" theme=${p.theme ?? "-"} vibe=${p.vibe ?? "-"}\n   transcript: ${(p.transcript ?? "(no transcript)").slice(0, 220)}`
+    )
+    .join("\n\n");
+
+  const sys = `You are a walking-tour guide curating an ordered audio walk from a list of geo-located voice memos ("Echoes").
+
+Pick 3–6 Echoes that best match the user's request. Order them into a coherent narrative.
+Return STRICT JSON with this exact shape (no markdown, no preface):
+
+{
+  "title": "Short evocative tour title (max 6 words)",
+  "intro": "One sentence (max 28 words) framing the tour.",
+  "stops": [
+    { "pinId": "<id from input>", "order": 1, "why": "One short line: why this stop fits and what comes next." }
+  ]
+}
+
+Rules:
+- Use ONLY pinIds from the supplied list.
+- 3 to 6 stops, no more.
+- "why" is at most 22 words, written in second person, telling the listener what to expect.
+- No emoji, no quotes inside strings.`;
+
+  const user = `User request: ${opts.prompt || "Surprise me — a memorable mix."}
+${opts.placeName ? `Area: ${opts.placeName}.` : ""}
+Available Echoes:
+
+${list}`;
+
+  const out = await chat({
+    model: "llama-3.3-70b-versatile",
+    system: sys,
+    user,
+    json: true,
+    temperature: 0.6,
+    maxTokens: 900,
+  });
+  if (!out) return null;
+
+  try {
+    const parsed = JSON.parse(out) as Tour;
+    if (!parsed.stops || !Array.isArray(parsed.stops) || parsed.stops.length === 0) {
+      return null;
+    }
+    const validIds = new Set(opts.pins.map((p) => p.id));
+    parsed.stops = parsed.stops
+      .filter((s) => validIds.has(s.pinId))
+      .slice(0, 6)
+      .map((s, i) => ({ ...s, order: i + 1 }));
+    if (parsed.stops.length === 0) return null;
+    parsed.title = (parsed.title ?? "Audio Walk").toString().slice(0, 60);
+    parsed.intro = (parsed.intro ?? "").toString().slice(0, 280);
+    return parsed;
+  } catch {
+    return null;
+  }
+}
+
 // ===== famous-place context summary =====
 export async function placeContext(opts: {
   placeName: string;

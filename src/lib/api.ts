@@ -151,6 +151,40 @@ export async function translatePin(
   return j;
 }
 
+export type TourStop = {
+  pinId: string;
+  order: number;
+  why: string;
+  lat: number;
+  lng: number;
+  title: string | null;
+  theme: Theme | null;
+  vibe: Vibe | null;
+};
+export type TourResult = {
+  title: string;
+  intro: string;
+  stops: TourStop[];
+  placeName: string | null;
+  radiusM: number;
+};
+
+export async function generateTour(input: {
+  lat: number;
+  lng: number;
+  prompt?: string;
+  radiusM?: number;
+}): Promise<TourResult> {
+  const r = await fetch("/api/tour", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(input),
+  });
+  const j = await r.json();
+  if (!r.ok) throw new Error(j.error ?? "tour failed");
+  return j as TourResult;
+}
+
 export async function fetchPlace(
   lat: number,
   lng: number
